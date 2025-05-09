@@ -14,7 +14,6 @@ int main(int argc, char *argv[]) {
     Message msg;
     msg.client_pid = getpid();
 
-    // Apenas comando -a nesta fase
     if (strcmp(argv[1], "-a") == 0) {
         if (argc != 6) {
             fprintf(stderr, "Erro: uso correto: %s -a \"Título\" \"Autores\" \"Ano\" \"Caminho\"\n", argv[0]);
@@ -72,6 +71,45 @@ int main(int argc, char *argv[]) {
             printf("Sem resultados.\n");
         }
 
+        close(fd);
+        remove_client_fifo(msg.client_pid);
+        
+    } else if (strcmp(argv[1], "-c") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Uso: %s -c <palavra-chave>\n", argv[0]);
+            return 1;
+        }
+    
+        if (create_client_fifo(msg.client_pid) != 0) {
+            fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
+            return 1;
+        }
+    
+        snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH_CONTENT|%s", argv[2]);
+    
+        if (send_message_to_server(&msg) != 0) {
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        // Esperar e imprimir resposta
+        char *fifo_name = get_client_fifo_name(msg.client_pid);
+        int fd = open(fifo_name, O_RDONLY);
+        if (fd == -1) {
+            perror("Erro ao abrir FIFO do cliente");
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        char buffer[1024];
+        ssize_t n = read(fd, buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("Resultado da pesquisa por conteúdo:\n%s\n", buffer);
+        } else {
+            printf("Sem resultados.\n");
+        }
+    
         close(fd);
         remove_client_fifo(msg.client_pid);
     } else {

@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include <fcntl.h>
 
 #include "ipc.h"
 #include "index.h"
@@ -105,11 +106,37 @@ int main() {
                 if (send_response_to_client(msg.client_pid, result) != 0) {
                     fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
                 }
-            }
+            } else if (strncmp(msg.operation, "SEARCH_CONTENT|", 15) == 0) {
+                char *keyword = msg.operation + 15;
+                char result[1024] = "";
             
-    
-            // Operação desconhecida
-            else {
+                for (int i = 0; i < CACHE_SIZE; i++) {
+                    const IndexEntry *entry = cache_get_by_index(i);
+                    if (!entry) break;
+            
+                    int fd = open(entry->path, O_RDONLY);
+                    if (fd == -1) continue;
+            
+                    char content[1024];
+                    ssize_t bytes = read(fd, content, sizeof(content) - 1);
+                    close(fd);
+            
+                    if (bytes <= 0) continue;
+                    content[bytes] = '\0';
+            
+                    if (strstr(content, keyword)) {
+                        char line[256];
+                        snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
+                                 entry->id, entry->title, entry->year,
+                                 entry->authors, entry->path);
+                        strncat(result, line, sizeof(result) - strlen(result) - 1);
+                    }
+                }
+            
+                if (send_response_to_client(msg.client_pid, result) != 0) {
+                    fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
+                }
+            } else {
                 printf("Servidor: operação não reconhecida: %s\n", msg.operation);
             }
         }
