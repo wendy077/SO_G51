@@ -17,7 +17,7 @@ SERVER_BIN = $(BIN_DIR)/dserver
 
 # Objetos específicos
 CLIENT_OBJ = $(SRC_DIR)/client.o $(SRC_DIR)/ipc.o
-SERVER_OBJ = $(SRC_DIR)/server.o $(SRC_DIR)/ipc.o $(SRC_DIR)/index.o $(SRC_DIR)/storage.o
+SERVER_OBJ = $(SRC_DIR)/server.o $(SRC_DIR)/ipc.o $(SRC_DIR)/index.o $(SRC_DIR)/storage.o $(SRC_DIR)/cache.o
 
 # Alvo por omissão
 all: $(CLIENT_BIN) $(SERVER_BIN)

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "ipc.h"
 
 int main(int argc, char *argv[]) {
@@ -33,6 +34,46 @@ int main(int argc, char *argv[]) {
         }
 
         printf("Cliente: pedido de indexação enviado com sucesso.\n");
+
+    } else if (strcmp(argv[1], "-s") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Uso: %s -s campo=valor\n", argv[0]);
+            return 1;
+        }
+
+        if (create_client_fifo(msg.client_pid) != 0) {
+            fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
+            return 1;
+        }
+
+        snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH|%s", argv[2]);
+
+        if (send_message_to_server(&msg) != 0) {
+            fprintf(stderr, "Erro ao enviar mensagem ao servidor.\n");
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+
+        // Esperar resposta
+        char *fifo_name = get_client_fifo_name(msg.client_pid);
+        int fd = open(fifo_name, O_RDONLY);
+        if (fd == -1) {
+            perror("Erro ao abrir FIFO do cliente para leitura");
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+
+        char buffer[1024];
+        ssize_t n = read(fd, buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("Resultado da pesquisa:\n%s\n", buffer);
+        } else {
+            printf("Sem resultados.\n");
+        }
+
+        close(fd);
+        remove_client_fifo(msg.client_pid);
     } else {
         fprintf(stderr, "Erro: operação desconhecida: %s\n", argv[1]);
         return 1;

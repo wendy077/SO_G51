@@ -5,6 +5,7 @@
 
 #define INDEX_FILE "data/index.dat"  // caminho relativo ao projeto
 
+int storage_load_all(IndexEntry **entries, int *count);
 int storage_append_index(const IndexEntry *entry);
 int storage_init();  // cria ficheiro se não existir
 // TODO: funções para carregar todos os índices, apagar, etc.

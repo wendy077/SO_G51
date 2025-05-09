@@ -51,3 +51,35 @@ int receive_message_from_client(Message *msg) {
     close(fd);
     return 0;
 }
+
+int create_client_fifo(pid_t pid) {
+    char *fifo_name = get_client_fifo_name(pid);
+    if (mkfifo(fifo_name, 0666) == -1) {
+        perror("mkfifo CLIENT_FIFO");
+        return -1;
+    }
+    return 0;
+}
+
+void remove_client_fifo(pid_t pid) {
+    char *fifo_name = get_client_fifo_name(pid);
+    unlink(fifo_name);
+}
+
+int send_response_to_client(pid_t pid, const char *response) {
+    char *fifo_name = get_client_fifo_name(pid);
+    int fd = open(fifo_name, O_WRONLY);
+    if (fd == -1) {
+        perror("open client FIFO to send response");
+        return -1;
+    }
+
+    if (write(fd, response, strlen(response)) == -1) {
+        perror("write to client FIFO");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    return 0;
+}
