@@ -68,7 +68,7 @@ int main(int argc, char *argv[]) {
         remove_client_fifo(msg.client_pid);
 
     } else if (strcmp(argv[1], "-s") == 0) {
-        
+
         if (argc != 3) {
             fprintf(stderr, "Uso: %s -s campo=valor\n", argv[0]);
             return 1;
@@ -146,6 +146,38 @@ int main(int argc, char *argv[]) {
     
         close(fd);
         remove_client_fifo(msg.client_pid);
+        
+    } else if (strcmp(argv[1], "-l") == 0 && argc == 4) {
+        if (create_client_fifo(msg.client_pid) != 0) {
+            fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
+            return 1;
+        }
+    
+        snprintf(msg.operation, MAX_MSG_SIZE, "COUNT_LINES|%s|%s", argv[2], argv[3]);
+    
+        if (send_message_to_server(&msg) != 0) {
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        char *fifo_name = get_client_fifo_name(msg.client_pid);
+        int fd = open(fifo_name, O_RDONLY);
+        if (fd == -1) {
+            perror("Erro ao abrir FIFO do cliente");
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        char buffer[256];
+        ssize_t n = read(fd, buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("%s\n", buffer);
+        }
+    
+        close(fd);
+        remove_client_fifo(msg.client_pid);
+
     } else {
         fprintf(stderr, "Erro: operação desconhecida: %s\n", argv[1]);
         return 1;

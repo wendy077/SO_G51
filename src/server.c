@@ -136,6 +136,7 @@ int main() {
                 if (send_response_to_client(msg.client_pid, result) != 0) {
                     fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
                 }
+
             } else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
                 int id = atoi(msg.operation + 9);
                 IndexEntry *entry = NULL;
@@ -172,6 +173,77 @@ int main() {
                     free(entries);
                 }
 
+            } else if (strncmp(msg.operation, "COUNT_LINES|", 12) == 0) {
+                char *copy = strdup(msg.operation + 12);
+                char *id_str = strtok(copy, "|");
+                char *word = strtok(NULL, "|");
+            
+                if (!id_str || !word) {
+                    send_response_to_client(msg.client_pid, "Erro: parâmetros inválidos.");
+                    free(copy);
+                    return 1;
+                }
+            
+                int id = atoi(id_str);
+                const IndexEntry *entry = cache_get_by_id(id);
+                IndexEntry *from_disk = NULL;
+            
+                if (!entry) {
+                    IndexEntry *entries = NULL;
+                    int total = 0;
+                    if (storage_load_all(&entries, &total) == 0) {
+                        for (int i = 0; i < total; i++) {
+                            if (entries[i].id == id) {
+                                from_disk = &entries[i];
+                                break;
+                            }
+                        }
+                    }
+                    entry = from_disk;
+                }
+            
+                if (!entry || entry->year == -1) {
+                    send_response_to_client(msg.client_pid, "Documento não encontrado.");
+                    free(copy);
+                    return 1;
+                }
+            
+                // Abrir e contar linhas com a palavra
+                int fd = open(entry->path, O_RDONLY);
+                if (fd == -1) {
+                    send_response_to_client(msg.client_pid, "Erro ao abrir ficheiro.");
+                    free(copy);
+                    return 1;
+                }
+            
+                char buf[1024];
+                ssize_t len;
+                int line_count = 0;
+                int match_count = 0;
+                char line[1024];
+                int pos = 0;
+            
+                while ((len = read(fd, buf, sizeof(buf))) > 0) {
+                    for (ssize_t i = 0; i < len; i++) {
+                        if (buf[i] == '\n' || pos >= 1023) {
+                            line[pos] = '\0';
+                            line_count++;
+                            if (strstr(line, word)) match_count++;
+                            pos = 0;
+                        } else {
+                            line[pos++] = buf[i];
+                        }
+                    }
+                }
+            
+                close(fd);
+                char response[128];
+                snprintf(response, sizeof(response), "Palavra '%s' encontrada em %d linha(s).", word, match_count);
+                send_response_to_client(msg.client_pid, response);
+            
+                free(copy);
+                if (from_disk) free(from_disk);
+                
             } else {
                 printf("Servidor: operação não reconhecida: %s\n", msg.operation);
             }
