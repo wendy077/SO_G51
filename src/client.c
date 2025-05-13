@@ -146,7 +146,7 @@ int main(int argc, char *argv[]) {
     
         close(fd);
         remove_client_fifo(msg.client_pid);
-        
+
     } else if (strcmp(argv[1], "-l") == 0 && argc == 4) {
         if (create_client_fifo(msg.client_pid) != 0) {
             fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
@@ -177,6 +177,16 @@ int main(int argc, char *argv[]) {
     
         close(fd);
         remove_client_fifo(msg.client_pid);
+
+    } else if (strcmp(argv[1], "-f") == 0) {
+        snprintf(msg.operation, MAX_MSG_SIZE, "SHUTDOWN");
+
+        if (send_message_to_server(&msg) != 0) {
+            fprintf(stderr, "Erro ao enviar pedido de encerramento.\n");
+            return 1;
+        }
+
+        printf("Pedido de encerramento enviado ao servidor.\n");
 
     } else {
         fprintf(stderr, "Erro: operação desconhecida: %s\n", argv[1]);

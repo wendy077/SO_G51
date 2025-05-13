@@ -243,7 +243,13 @@ int main() {
             
                 free(copy);
                 if (from_disk) free(from_disk);
+
+            } else if (strcmp(msg.operation, "SHUTDOWN") == 0) {
                 
+                printf("Servidor: encerramento solicitado pelo cliente %d\n", msg.client_pid);
+                cleanup();  // remove FIFO e liberta recursos
+                exit(0);
+
             } else {
                 printf("Servidor: operação não reconhecida: %s\n", msg.operation);
             }
