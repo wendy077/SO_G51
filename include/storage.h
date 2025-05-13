@@ -8,6 +8,8 @@
 int storage_load_all(IndexEntry **entries, int *count);
 int storage_append_index(const IndexEntry *entry);
 int storage_init();  // cria ficheiro se não existir
-// TODO: funções para carregar todos os índices, apagar, etc.
+int storage_get_max_id();
+
+// TODO funções para carregar todos os índices, apagar, etc.
 
 #endif

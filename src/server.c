@@ -136,6 +136,42 @@ int main() {
                 if (send_response_to_client(msg.client_pid, result) != 0) {
                     fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
                 }
+            } else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
+                int id = atoi(msg.operation + 9);
+                IndexEntry *entry = NULL;
+                IndexEntry *entries = NULL;
+                int total = 0;
+                int from_disk = 0;
+
+                entry = cache_get_by_id(id);
+            
+                // Se não estiver na cache, tenta carregar do disco
+                if (!entry) {
+                    if (storage_load_all(&entries, &total) == 0) {
+                        for (int i = 0; i < total; i++) {
+                            if (entries[i].id == id) {
+                                entry = &entries[i];
+                                break;
+                            }
+                        }
+                    }
+                    // nota: não free(entries) ainda, pois entry pode estar a apontar para lá
+                }
+            
+                if (entry) {
+                    char response[256];
+                    snprintf(response, sizeof(response), "[%d] %s (%d) - %s [%s]",
+                             entry->id, entry->title, entry->year,
+                             entry->authors, entry->path);
+                    send_response_to_client(msg.client_pid, response);
+                } else {
+                    send_response_to_client(msg.client_pid, "Documento não encontrado.");
+                }
+            
+                if (from_disk && entries != NULL) {
+                    free(entries);
+                }
+
             } else {
                 printf("Servidor: operação não reconhecida: %s\n", msg.operation);
             }

@@ -79,3 +79,21 @@ int storage_load_all(IndexEntry **entries, int *count) {
     close(fd);
     return 0;
 }
+
+int storage_get_max_id() {
+    int fd = open(INDEX_FILE, O_RDONLY);
+    if (fd == -1) return 0;
+
+    IndexEntry entry;
+    int max_id = 0;
+
+    while (read(fd, &entry, sizeof(IndexEntry)) == sizeof(IndexEntry)) {
+        if (entry.year != -1 && entry.id > max_id) {
+            max_id = entry.id;
+        }
+    }
+
+    close(fd);
+    return max_id;
+}
+

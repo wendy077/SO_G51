@@ -4,10 +4,13 @@
 #include <ctype.h>
 #include "index.h"
 
-static int current_id = 1;
+static int current_id = -1;
 
 int generate_new_id() {
-    return current_id++;
+    if (current_id == -1) {
+        current_id = storage_get_max_id();  // inicia com o maior ID já usado
+    }
+    return ++current_id;
 }
 
 IndexEntry *parse_add_command(const char *operation_str) {

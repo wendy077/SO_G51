@@ -34,7 +34,41 @@ int main(int argc, char *argv[]) {
 
         printf("Cliente: pedido de indexação enviado com sucesso.\n");
 
+    } else if (strcmp(argv[1], "-c") == 0 && argc == 3) {
+        if (create_client_fifo(msg.client_pid) != 0) {
+            fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
+            return 1;
+        }
+    
+        snprintf(msg.operation, MAX_MSG_SIZE, "GET_META|%s", argv[2]);
+    
+        if (send_message_to_server(&msg) != 0) {
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        char *fifo_name = get_client_fifo_name(msg.client_pid);
+        int fd = open(fifo_name, O_RDONLY);
+        if (fd == -1) {
+            perror("Erro ao abrir FIFO do cliente");
+            remove_client_fifo(msg.client_pid);
+            return 1;
+        }
+    
+        char buffer[1024];
+        ssize_t n = read(fd, buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+            buffer[n] = '\0';
+            printf("Meta-informação:\n%s\n", buffer);
+        } else {
+            printf("Documento com esse ID não encontrado.\n");
+        }
+    
+        close(fd);
+        remove_client_fifo(msg.client_pid);
+
     } else if (strcmp(argv[1], "-s") == 0) {
+        
         if (argc != 3) {
             fprintf(stderr, "Uso: %s -s campo=valor\n", argv[0]);
             return 1;
