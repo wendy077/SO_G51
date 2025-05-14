@@ -13,6 +13,10 @@ typedef struct {
 
 static Cache cache;
 
+int cache_size() {
+    return cache.count;
+}
+
 int cache_init(int max_entries) {
     cache.entries = malloc(sizeof(IndexEntry) * max_entries);
     if (!cache.entries) return -1;
@@ -53,7 +57,6 @@ const IndexEntry *cache_get_by_index(int i) {
     int index = (cache.start + i) % cache.max;
     return &cache.entries[index];
 }
-
 
 void cache_free() {
     free(cache.entries);

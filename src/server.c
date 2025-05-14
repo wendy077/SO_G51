@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <string.h>
 #include <fcntl.h>
+#include <ctype.h>
 
 #include "ipc.h"
 #include "index.h"
@@ -16,6 +17,12 @@ void cleanup() {
     unlink(SERVER_FIFO);
     cache_free();  // libertar memória da cache
     printf("\nServidor: FIFO e cache removidos.\n");
+}
+
+void to_lowercase(char *str) {
+    for (int i = 0; str[i]; i++) {
+        str[i] = tolower((unsigned char)str[i]);
+    }
 }
 
 int main() {
@@ -53,6 +60,23 @@ int main() {
                 IndexEntry *entry = parse_add_command(msg.operation);
                 if (entry == NULL) {
                     fprintf(stderr, "Erro ao interpretar a operação ADD.\n");
+                    continue;
+                }
+
+                // Verificar duplicação de path na cache
+                int duplicado = 0;
+                for (int i = 0; i < cache_size(); i++) {
+                    const IndexEntry *e = cache_get_by_index(i);
+                    if (e && strcmp(e->path, entry->path) == 0) {
+                        duplicado = 1;
+                        break;
+                    }
+                }
+
+                if (duplicado) {
+                    printf("Servidor: Documento já indexado: %s\n", entry->path);
+                    send_response_to_client(msg.client_pid, "Documento já está indexado.\n");
+                    free(entry);
                     continue;
                 }
     
@@ -106,38 +130,73 @@ int main() {
                 if (send_response_to_client(msg.client_pid, result) != 0) {
                     fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
                 }
+
             } else if (strncmp(msg.operation, "SEARCH_CONTENT|", 15) == 0) {
                 char *keyword = msg.operation + 15;
                 char result[1024] = "";
             
                 for (int i = 0; i < CACHE_SIZE; i++) {
                     const IndexEntry *entry = cache_get_by_index(i);
-                    if (!entry) break;
+                    if (!entry || entry->year == -1) {
+                        continue;
+                    }
             
                     int fd = open(entry->path, O_RDONLY);
-                    if (fd == -1) continue;
-            
-                    char content[1024];
-                    ssize_t bytes = read(fd, content, sizeof(content) - 1);
-                    close(fd);
-            
-                    if (bytes <= 0) continue;
-                    content[bytes] = '\0';
-            
-                    if (strstr(content, keyword)) {
-                        char line[256];
-                        snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
-                                 entry->id, entry->title, entry->year,
-                                 entry->authors, entry->path);
-                        strncat(result, line, sizeof(result) - strlen(result) - 1);
+                    if (fd == -1) {
+                        perror("DEBUG: Erro ao abrir ficheiro");
+                        continue;
                     }
-                }
-            
-                if (send_response_to_client(msg.client_pid, result) != 0) {
-                    fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
+
+                    off_t size = lseek(fd, 0, SEEK_END);
+                        if (size <= 0) {
+                            close(fd);
+                            continue;
+                        }
+                        lseek(fd, 0, SEEK_SET);
+
+                        char *buf = malloc(size + 1);
+                        if (!buf) {
+                            close(fd);
+                            continue;
+                        }
+
+                        ssize_t len = read(fd, buf, size);
+                        printf("DEBUG: Lidos %ld bytes de %s\n", len, entry->path);
+
+                        close(fd);
+
+                        if (len <= 0) {
+                            free(buf);
+                            continue;
+                        }
+                        buf[len] = '\0';
+
+
+                        if (strstr(buf, keyword)) {
+                            printf("DEBUG: Palavra '%s' encontrada em %s\n", keyword, entry->path);
+
+                            char line[256];
+                            snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
+                                    entry->id, entry->title, entry->year,
+                                    entry->authors, entry->path);
+                            strncat(result, line, sizeof(result) - strlen(result) - 1);
+                        } else {
+                            printf("DEBUG: Palavra '%s' NÃO encontrada em %s\n", keyword, entry->path);
+                        }
+
+                        free(buf);
+
                 }
 
-            } else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
+                if (strlen(result) == 0) {
+                    strcpy(result, "Sem resultados.\n");
+                }
+                
+                send_response_to_client(msg.client_pid, result);
+                
+            } 
+            
+            else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
                 int id = atoi(msg.operation + 9);
                 IndexEntry *entry = NULL;
                 IndexEntry *entries = NULL;
@@ -228,8 +287,21 @@ int main() {
                         if (buf[i] == '\n' || pos >= 1023) {
                             line[pos] = '\0';
                             line_count++;
-                            if (strstr(line, word)) match_count++;
-                            pos = 0;
+                            char temp_line[1024];
+                            char temp_word[128];
+                            
+                            strncpy(temp_line, line, sizeof(temp_line));
+                            strncpy(temp_word, word, sizeof(temp_word));
+                            temp_line[sizeof(temp_line) - 1] = '\0';
+                            temp_word[sizeof(temp_word) - 1] = '\0';
+                            
+                            to_lowercase(temp_line);
+                            to_lowercase(temp_word);
+                            
+                            if (strstr(temp_line, temp_word)) {
+                                match_count++;
+                            }
+                                pos = 0;
                         } else {
                             line[pos++] = buf[i];
                         }
@@ -244,8 +316,105 @@ int main() {
                 free(copy);
                 if (from_disk) free(from_disk);
 
-            } else if (strcmp(msg.operation, "SHUTDOWN") == 0) {
+            } else if (strncmp(msg.operation, "SEARCH_PARALLEL|", 16) == 0) {
+                // Parse: palavra e N
+                char *copy = strdup(msg.operation + 16);
+                char *word = strtok(copy, "|");
+                char *n_str = strtok(NULL, "|");
+            
+                if (!word || !n_str) {
+                    send_response_to_client(msg.client_pid, "Erro: argumentos inválidos.");
+                    free(copy);
+                    return 1;
+                }
+            
+                int N = atoi(n_str);
+                int total_entries = cache_size();
+                if (N <= 0 || N > total_entries) {
+                    send_response_to_client(msg.client_pid, "Erro: número inválido de processos.");
+                    free(copy);
+                    return 1;
+                }
+            
+                // Dividir a cache em N blocos
+                int entries_per_proc = total_entries / N;
+                int resto = total_entries % N;
+            
+                int pipes[N][2];
+                pid_t pids[N];
+            
+                for (int i = 0, start = 0; i < N; i++) {
+                    int count = entries_per_proc + (i < resto ? 1 : 0);
+                    int begin = start;
+                    start += count;
+            
+                    if (pipe(pipes[i]) == -1) {
+                        perror("pipe");
+                        continue;
+                    }
+            
+                    pid_t pid = fork();
+                    if (pid == -1) {
+                        perror("fork");
+                        continue;
+                    }
+            
+                    if (pid == 0) {
+                        // Processo filho
+                        close(pipes[i][0]); // fecha leitura
+            
+                        for (int j = begin; j < begin + count; j++) {
+                            const IndexEntry *entry = cache_get_by_index(j);
+                            if (!entry || entry->year == -1) continue;
+            
+                            int fd = open(entry->path, O_RDONLY);
+                            if (fd == -1) continue;
+            
+                            char buf[1024];
+                            ssize_t len = read(fd, buf, sizeof(buf) - 1);
+                            close(fd);
+                            if (len <= 0) continue;
+                            buf[len] = '\0';
+            
+                            if (strstr(buf, word)) {
+                                char line[256];
+                                snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
+                                         entry->id, entry->title, entry->year,
+                                         entry->authors, entry->path);
+                                write(pipes[i][1], line, strlen(line));
+                            }
+                        }
+            
+                        close(pipes[i][1]);
+                        exit(0);
+                    } else {
+                        pids[i] = pid;
+                        close(pipes[i][1]);  // processo pai fecha escrita
+                    }
+                }
+            
+                // Processo pai lê todos os resultados
+                char final_result[2048] = "";
+                for (int i = 0; i < N; i++) {
+                    char buf[256];
+                    ssize_t n;
+                    while ((n = read(pipes[i][0], buf, sizeof(buf) - 1)) > 0) {
+                        buf[n] = '\0';
+                        strncat(final_result, buf, sizeof(final_result) - strlen(final_result) - 1);
+                    }
+                    close(pipes[i][0]);
+                    waitpid(pids[i], NULL, 0);  // espera filho
+                }
+            
+                if (strlen(final_result) == 0) {
+                    strcpy(final_result, "Sem resultados.");
+                }
+            
+                send_response_to_client(msg.client_pid, final_result);
+                free(copy);
                 
+            } else if (strcmp(msg.operation, "SHUTDOWN") == 0) {
+
                 printf("Servidor: encerramento solicitado pelo cliente %d\n", msg.client_pid);
                 cleanup();  // remove FIFO e liberta recursos
                 exit(0);
