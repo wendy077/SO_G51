@@ -181,7 +181,6 @@ int main(int argc, char *argv[]) {
                         }
 
                         ssize_t len = read(fd, buf, size);
-                        printf("DEBUG: Lidos %ld bytes de %s\n", len, entry->path);
 
                         close(fd);
 
@@ -252,12 +251,12 @@ int main(int argc, char *argv[]) {
                 }
             
                 if (entry && entry->year != -1) {
-                printf("DEBUG: Entrada encontrada -> year = %d\n", entry->year);
-                char response[256];
-                const char *filename = strrchr(entry->path, '/');
-                filename = (filename != NULL) ? filename + 1 : entry->path;
+                    printf("DEBUG: Entrada encontrada -> year = %d\n", entry->year);
+                    char response[256];
+                    const char *filename = strrchr(entry->path, '/');
+                    filename = (filename != NULL) ? filename + 1 : entry->path;
 
-                snprintf(response, sizeof(response), "Title: %s\nAuthors: %s\nYear: %d\nPath: %s",
+                    snprintf(response, sizeof(response), "Title: %s\nAuthors: %s\nYear: %d\nPath: %s",
                         entry->title, entry->authors, entry->year, filename);
                     send_response_to_client(msg.client_pid, response);
                 } else {
@@ -289,9 +288,9 @@ int main(int argc, char *argv[]) {
                 int id = atoi(id_str);
                 const IndexEntry *entry = cache_get_by_id(id);
                 IndexEntry *from_disk = NULL;
+                IndexEntry *entries = NULL;
             
-                if (!entry) {
-                    IndexEntry *entries = NULL;
+                if (entry == NULL) {
                     int total = 0;
                     if (storage_load_all(&entries, &total) == 0) {
                         for (int i = 0; i < total; i++) {
@@ -336,16 +335,14 @@ int main(int argc, char *argv[]) {
                             
                             strncpy(temp_line, line, sizeof(temp_line));
                             strncpy(temp_word, word, sizeof(temp_word));
-                            temp_line[sizeof(temp_line) - 1] = '\0';
-                            temp_word[sizeof(temp_word) - 1] = '\0';
-                            
+
                             to_lowercase(temp_line);
                             to_lowercase(temp_word);
-                            
+
                             if (strstr(temp_line, temp_word)) {
                                 match_count++;
                             }
-                                pos = 0;
+                            pos = 0;
                         } else {
                             line[pos++] = buf[i];
                         }
@@ -363,7 +360,10 @@ int main(int argc, char *argv[]) {
                 log_operation("COUNT_LINES", log_msg);
 
                 free(copy);
-                if (from_disk) free(from_disk);
+                
+                if (entries != NULL) {
+                    free(entries);
+                }
 
             } else if (strncmp(msg.operation, "DELETE|", 7) == 0) {
                 int id = atoi(msg.operation + 7);
@@ -479,7 +479,7 @@ int main(int argc, char *argv[]) {
                         close(pipes[i][1]);  // processo pai fecha escrita
                     }
                 }
-            
+
                 // Processo pai lê todos os resultados
                 char final_result[2048] = "";
                 for (int i = 0; i < N; i++) {
@@ -545,7 +545,6 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-  
 
     return 0;
 }
