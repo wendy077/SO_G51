@@ -140,13 +140,20 @@ int main(int argc, char *argv[]) {
         close(fd);
         remove_client_fifo(msg.client_pid);
 
-    } else if (strcmp(argv[1], "-s") == 0 && argc == 3) {
+    } else if (strcmp(argv[1], "-s") == 0) {
         if (create_client_fifo(msg.client_pid) != 0) {
             fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
             return 1;
         }
 
-        snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH_CONTENT|%s", argv[2]);
+        if (argc == 3)
+            snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH_CONTENT|%s", argv[2]);
+        else if (argc == 4)
+            snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH_PARALLEL|%s|%s", argv[2], argv[3]);
+        else {
+            fprintf(stderr, "Erro: uso correto: %s -s \"Keyword\" \"Nr Processos (opcional)\"\n", argv[0]);
+            return 1;
+        }
 
         if (send_message_to_server(&msg) != 0) {
             remove_client_fifo(msg.client_pid);
@@ -173,37 +180,6 @@ int main(int argc, char *argv[]) {
         close(fd);
         remove_client_fifo(msg.client_pid);
 
-    } else if (strcmp(argv[1], "-s") == 0 && argc == 4) {
-        if (create_client_fifo(msg.client_pid) != 0) {
-            fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
-            return 1;
-        }
-
-        snprintf(msg.operation, MAX_MSG_SIZE, "SEARCH_PARALLEL|%s|%s", argv[2], argv[3]);
-
-        if (send_message_to_server(&msg) != 0) {
-            remove_client_fifo(msg.client_pid);
-            return 1;
-        }
-
-        char *fifo_name = get_client_fifo_name(msg.client_pid);
-        int fd = open(fifo_name, O_RDONLY);
-        if (fd == -1) {
-            perror("Erro ao abrir FIFO do cliente");
-            remove_client_fifo(msg.client_pid);
-            return 1;
-        }
-
-        char buffer[2048];
-        ssize_t n = read(fd, buffer, sizeof(buffer) - 1);
-        if (n > 0) {
-            buffer[n] = '\0';
-            printf("%s\n", buffer);
-        }
-
-        close(fd);
-        remove_client_fifo(msg.client_pid);
-        
     } else if (strcmp(argv[1], "-stats") == 0) {
         if (create_client_fifo(msg.client_pid) != 0) {
             fprintf(stderr, "Erro ao criar FIFO do cliente.\n");
