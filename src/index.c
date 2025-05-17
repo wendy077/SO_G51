@@ -4,6 +4,10 @@
 #include <ctype.h>
 #include "index.h"
 
+#define MAX_TITLE_LEN 200
+#define MAX_AUTHORS_LEN 200
+#define MAX_PATH_LEN 64
+
 static int current_id = -1;
 
 int generate_new_id() {
@@ -16,7 +20,6 @@ int generate_new_id() {
 IndexEntry *parse_add_command(const char *operation_str) {
     if (!operation_str) return NULL;
 
-    // Espera-se: ADD|title|authors|year|path
     char *copy = strdup(operation_str);
     if (!copy) return NULL;
 
@@ -32,28 +35,51 @@ IndexEntry *parse_add_command(const char *operation_str) {
         return NULL;
     }
 
-    // Campo: title
+    // Title
     token = strtok(NULL, "|");
-    if (!token) { free(copy); free(entry); return NULL; }
-    strncpy(entry->title, token, MAX_TITLE);
+    if (!token || strlen(token) >= MAX_TITLE_LEN) {
+        free(copy); free(entry);
+        fprintf(stderr, "Erro: Título demasiado longo ou ausente.\n");
+        return NULL;
+    }
+    strncpy(entry->title, token, MAX_TITLE_LEN);
 
-    // Campo: authors
+    // Authors
     token = strtok(NULL, "|");
-    if (!token) { free(copy); free(entry); return NULL; }
-    strncpy(entry->authors, token, MAX_AUTHORS);
+    if (!token || strlen(token) >= MAX_AUTHORS_LEN) {
+        free(copy); free(entry);
+        fprintf(stderr, "Erro: Autores demasiado longos ou ausentes.\n");
+        return NULL;
+    }
+    strncpy(entry->authors, token, MAX_AUTHORS_LEN);
 
-    // Campo: year
+    // Year (número)
     token = strtok(NULL, "|");
-    if (!token) { free(copy); free(entry); return NULL; }
+    if (!token) {
+        free(copy); free(entry);
+        fprintf(stderr, "Erro: Ano não fornecido.\n");
+        return NULL;
+    }
+    for (size_t i = 0; token[i]; i++) {
+        if (!isdigit(token[i])) {
+            free(copy); free(entry);
+            fprintf(stderr, "Erro: Ano inválido.\n");
+            return NULL;
+        }
+    }
     entry->year = atoi(token);
 
-    // Campo: path
+    // Path
     token = strtok(NULL, "|");
-    if (!token) { free(copy); free(entry); return NULL; }
-    strncpy(entry->path, token, MAX_PATH);
-
-    entry->id = generate_new_id();
+    if (!token || strlen(token) >= MAX_PATH_LEN) {
+        free(copy); free(entry);
+        fprintf(stderr, "Erro: Caminho demasiado longo ou ausente.\n");
+        return NULL;
+    }
+    strncpy(entry->path, token, MAX_PATH_LEN);
 
     free(copy);
     return entry;
 }
+
+

@@ -83,3 +83,31 @@ int send_response_to_client(pid_t pid, const char *response) {
     close(fd);
     return 0;
 }
+
+char *receive_response_from_server() {
+    char *fifo_name = get_client_fifo_name(getpid());
+    int fd = open(fifo_name, O_RDONLY);
+    if (fd == -1) {
+        perror("open client FIFO to receive response");
+        return NULL;
+    }
+
+    char *buffer = malloc(1024);
+    if (!buffer) {
+        perror("malloc");
+        close(fd);
+        return NULL;
+    }
+
+    ssize_t len = read(fd, buffer, 1023);
+    if (len == -1) {
+        perror("read from client FIFO");
+        close(fd);
+        free(buffer);
+        return NULL;
+    }
+
+    buffer[len] = '\0';  // garantir que termina em null
+    close(fd);
+    return buffer;
+}

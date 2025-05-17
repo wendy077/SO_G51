@@ -17,6 +17,7 @@ char *get_client_fifo_name(pid_t pid);
 int create_client_fifo(pid_t pid);
 void remove_client_fifo(pid_t pid);
 int send_response_to_client(pid_t pid, const char *response);
+char *receive_response_from_server();
 
 
 #endif

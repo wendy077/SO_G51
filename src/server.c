@@ -10,8 +10,21 @@
 #include "index.h"
 #include "storage.h"
 #include "cache.h"
+#include <time.h>
 
-#define CACHE_SIZE 100  // definir tamanho máximo da cache
+#define LOG_FILE "data/log.txt"
+
+void log_operation(const char *op, const char *details) {
+    int fd = open(LOG_FILE, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd == -1) return;
+
+    time_t now = time(NULL);
+    char buffer[512];
+    int len = snprintf(buffer, sizeof(buffer), "%s | %s | %s\n", ctime(&now), op, details);
+
+    if (len > 0) write(fd, buffer, len);
+    close(fd);
+}
 
 void cleanup() {
     unlink(SERVER_FIFO);
@@ -25,10 +38,19 @@ void to_lowercase(char *str) {
     }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+
+    if (argc != 3) {
+        fprintf(stderr, "Uso: %s <document_folder> <cache_size>\n", argv[0]);
+        return 1;
+    }
+
+    const char *folder = argv[1];
+    int max_cache_entries = atoi(argv[2]);
+
     if (create_server_fifo() != 0) return 1;
-    if (storage_init() != 0) return 1;
-    if (cache_init(CACHE_SIZE) != 0) {
+    if (storage_init(folder) != 0) return 1;
+    if (cache_init(max_cache_entries) != 0) {
         fprintf(stderr, "Erro ao inicializar a cache\n");
         return 1;
     }
@@ -41,11 +63,13 @@ int main() {
     if (storage_load_all(&indices, &total) == 0) {
         printf("Servidor: %d índices carregados do disco.\n", total);
         for (int i = 0; i < total; i++) {
+            if (indices[i].year != -1) {  // só adiciona se não estiver marcado como removido
             cache_add(&indices[i]);  // adicionar cada índice à cache
             printf("  [%d] %s (%d) - %s [%s]\n",
                    indices[i].id, indices[i].title, indices[i].year,
                    indices[i].authors, indices[i].path);
         }
+    }
         free(indices);
     }
 
@@ -67,80 +91,76 @@ int main() {
                 int duplicado = 0;
                 for (int i = 0; i < cache_size(); i++) {
                     const IndexEntry *e = cache_get_by_index(i);
-                    if (e && strcmp(e->path, entry->path) == 0) {
+                    if (e && e->year != -1 && strcmp(e->path, entry->path) == 0) {
                         duplicado = 1;
                         break;
                     }
                 }
 
+                // Verifica no disco se não está na cache
+                if (!duplicado) {
+                    IndexEntry *all = NULL;
+                    int count = 0;
+                    if (storage_load_all(&all, &count) == 0) {
+                        for (int i = 0; i < count; i++) {
+                            if (strcmp(all[i].path, entry->path) == 0) {
+                                duplicado = 1;
+                                break;
+                            }
+                        }
+                        free(all);
+                    }
+                }
+                
                 if (duplicado) {
                     printf("Servidor: Documento já indexado: %s\n", entry->path);
                     send_response_to_client(msg.client_pid, "Documento já está indexado.\n");
                     free(entry);
                     continue;
                 }
-    
+
+                entry->id = generate_new_id();
+
+                
                 printf("Servidor: a indexar documento -> ID: %d | Título: %s | Autores: %s | Ano: %d | Caminho: %s\n",
                        entry->id, entry->title, entry->authors, entry->year, entry->path);
-    
+                
+                char response[128];
+                
                 if (storage_append_index(entry) != 0) {
                     fprintf(stderr, "Erro ao guardar o índice no disco.\n");
+                    snprintf(response, sizeof(response), "Erro ao guardar o documento.");
                 } else {
                     cache_add(entry);  // guardar na cache também
+                    snprintf(response, sizeof(response), "Document %d indexed", entry->id);
                 }
-    
+                
+                send_response_to_client(msg.client_pid, response);
+
+                char log_msg[256];
+                snprintf(log_msg, sizeof(log_msg), "ID=%d | Título=%s | Caminho=%s", entry->id, entry->title, entry->path);
+                log_operation("ADD", log_msg);
+
                 free(entry);
-            }
-    
-            // 🔍 NOVO BLOCO: Pesquisa por campo
-            else if (strncmp(msg.operation, "SEARCH|", 7) == 0) {
-                char *query = msg.operation + 7;
-                char *field = strtok(query, "=");
-                char *value = strtok(NULL, "=");
-            
-                if (!field || !value) {
-                    fprintf(stderr, "Erro: pesquisa mal formada.\n");
-                    continue;
-                }
-            
-                printf("Servidor: a procurar por %s = %s\n", field, value);
-            
-                char result[1024] = "";
-                for (int i = 0; i < CACHE_SIZE; i++) {
-                    const IndexEntry *entry = cache_get_by_index(i);
-                    if (!entry) break;
-            
-                    int match = 0;
-                    if (strcmp(field, "title") == 0 && strstr(entry->title, value)) match = 1;
-                    else if (strcmp(field, "author") == 0 && strstr(entry->authors, value)) match = 1;
-                    else if (strcmp(field, "year") == 0 && entry->year == atoi(value)) match = 1;
-            
-                    if (match) {
-                        char line[256];
-                        snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
-                                 entry->id, entry->title, entry->year, entry->authors, entry->path);
-                        strncat(result, line, sizeof(result) - strlen(result) - 1);
-                    }
-                }
-            
-                if (strlen(result) == 0) {
-                    snprintf(result, sizeof(result), "Sem resultados.\n");
-                }
-            
-                if (send_response_to_client(msg.client_pid, result) != 0) {
-                    fprintf(stderr, "Erro ao enviar resposta ao cliente %d\n", msg.client_pid);
-                }
+              
 
             } else if (strncmp(msg.operation, "SEARCH_CONTENT|", 15) == 0) {
                 char *keyword = msg.operation + 15;
+                char keyword_lc[256];
+                strncpy(keyword_lc, keyword, sizeof(keyword_lc));
+                keyword_lc[sizeof(keyword_lc) - 1] = '\0';
+                to_lowercase(keyword_lc);
                 char result[1024] = "";
             
-                for (int i = 0; i < CACHE_SIZE; i++) {
-                    const IndexEntry *entry = cache_get_by_index(i);
+                int total = cache_size();
+                    for (int i = 0; i < total; i++) {
+                        const IndexEntry *entry = cache_get_by_index(i);
+
                     if (!entry || entry->year == -1) {
                         continue;
                     }
-            
+
+                    if (!entry->path || strlen(entry->path) == 0) continue;
                     int fd = open(entry->path, O_RDONLY);
                     if (fd == -1) {
                         perror("DEBUG: Erro ao abrir ficheiro");
@@ -170,16 +190,14 @@ int main() {
                             continue;
                         }
                         buf[len] = '\0';
+                        to_lowercase(buf);
 
 
-                        if (strstr(buf, keyword)) {
-                            printf("DEBUG: Palavra '%s' encontrada em %s\n", keyword, entry->path);
-
-                            char line[256];
-                            snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
-                                    entry->id, entry->title, entry->year,
-                                    entry->authors, entry->path);
-                            strncat(result, line, sizeof(result) - strlen(result) - 1);
+                        if (strstr(buf, keyword_lc)) {
+                            char id_buf[16];
+                            snprintf(id_buf, sizeof(id_buf), "%d,", entry->id);
+                            strncat(result, id_buf, sizeof(result) - strlen(result) - 1);
+                                                
                         } else {
                             printf("DEBUG: Palavra '%s' NÃO encontrada em %s\n", keyword, entry->path);
                         }
@@ -188,15 +206,26 @@ int main() {
 
                 }
 
-                if (strlen(result) == 0) {
-                    strcpy(result, "Sem resultados.\n");
+                size_t len = strlen(result);
+                if (len > 0 && result[len - 1] == ',') {
+                    result[len - 1] = '\0'; // remove vírgula final
                 }
+
+                char formatted[1024];
+                if (strlen(result) == 0) {
+                    strcpy(formatted, "[]");
+                } else {
+                    snprintf(formatted, sizeof(formatted), "[%s]", result);
+                }
+
+                send_response_to_client(msg.client_pid, formatted);
+
+                char log_msg[128];
+                snprintf(log_msg, sizeof(log_msg), "Keyword=%s | Resultado=%s", keyword, formatted);
+                log_operation("SEARCH_CONTENT", log_msg);
                 
-                send_response_to_client(msg.client_pid, result);
                 
-            } 
-            
-            else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
+            } else if (strncmp(msg.operation, "GET_META|", 9) == 0) {
                 int id = atoi(msg.operation + 9);
                 IndexEntry *entry = NULL;
                 IndexEntry *entries = NULL;
@@ -209,25 +238,39 @@ int main() {
                 if (!entry) {
                     if (storage_load_all(&entries, &total) == 0) {
                         for (int i = 0; i < total; i++) {
+                            printf("DEBUG: ID=%d | Year=%d | Title=%s\n", entries[i].id, entries[i].year, entries[i].title);
                             if (entries[i].id == id) {
-                                entry = &entries[i];
+                                static IndexEntry temp_entry;  // usar variável local estática
+                                temp_entry = entries[i];       // copiar dados
+                                entry = &temp_entry;
+                                from_disk = 1;
                                 break;
                             }
+                            
                         }
                     }
-                    // nota: não free(entries) ainda, pois entry pode estar a apontar para lá
                 }
             
-                if (entry) {
-                    char response[256];
-                    snprintf(response, sizeof(response), "[%d] %s (%d) - %s [%s]",
-                             entry->id, entry->title, entry->year,
-                             entry->authors, entry->path);
+                if (entry && entry->year != -1) {
+                printf("DEBUG: Entrada encontrada -> year = %d\n", entry->year);
+                char response[256];
+                const char *filename = strrchr(entry->path, '/');
+                filename = (filename != NULL) ? filename + 1 : entry->path;
+
+                snprintf(response, sizeof(response), "Title: %s\nAuthors: %s\nYear: %d\nPath: %s",
+                        entry->title, entry->authors, entry->year, filename);
                     send_response_to_client(msg.client_pid, response);
                 } else {
+                    printf("DEBUG: Entrada não encontrada na cache ou disco.\n");
                     send_response_to_client(msg.client_pid, "Documento não encontrado.");
                 }
             
+                char log_msg[256];
+                snprintf(log_msg, sizeof(log_msg), "ID=%d | Title=%s | Found=%s", id,
+                        (entry ? entry->title : "NULL"),
+                        (entry && entry->year != -1 ? "yes" : "no"));
+                log_operation("GET_META", log_msg);
+
                 if (from_disk && entries != NULL) {
                     free(entries);
                 }
@@ -268,6 +311,7 @@ int main() {
                 }
             
                 // Abrir e contar linhas com a palavra
+                if (!entry->path || strlen(entry->path) == 0) continue;
                 int fd = open(entry->path, O_RDONLY);
                 if (fd == -1) {
                     send_response_to_client(msg.client_pid, "Erro ao abrir ficheiro.");
@@ -313,8 +357,51 @@ int main() {
                 snprintf(response, sizeof(response), "Palavra '%s' encontrada em %d linha(s).", word, match_count);
                 send_response_to_client(msg.client_pid, response);
             
+                char log_msg[256];
+                snprintf(log_msg, sizeof(log_msg), "ID=%d | Palavra='%s' | Linhas com match=%d",
+                        id, word, match_count);
+                log_operation("COUNT_LINES", log_msg);
+
                 free(copy);
                 if (from_disk) free(from_disk);
+
+            } else if (strncmp(msg.operation, "DELETE|", 7) == 0) {
+                int id = atoi(msg.operation + 7);
+                IndexEntry *entries = NULL;
+                int total = 0;
+                int found = 0;
+            
+                if (storage_load_all(&entries, &total) == 0) {
+                    for (int i = 0; i < total; i++) {
+                        if (entries[i].id == id && entries[i].year != -1) {
+                            entries[i].year = -1;
+                            found = 1;
+                            break;
+                        }
+                    }
+                }
+            
+                if (!found) {
+                    send_response_to_client(msg.client_pid, "Documento não encontrado.");
+                    log_operation("DELETE", "Falha: documento não encontrado");
+                    free(entries);
+                } else {
+                    int fd = open("data/index.dat", O_WRONLY | O_TRUNC);
+                    if (fd != -1) {
+                        write(fd, entries, total * sizeof(IndexEntry));
+                        close(fd);
+
+                    }
+                    cache_remove_by_id(id);
+                    char deleted_msg[64];
+                    snprintf(deleted_msg, sizeof(deleted_msg), "Index entry %d deleted.", id);
+                    send_response_to_client(msg.client_pid, deleted_msg);
+
+                    char log_msg[64];
+                    snprintf(log_msg, sizeof(log_msg), "ID=%d removido com sucesso", id);
+                    log_operation("DELETE", log_msg);
+                    free(entries);
+                }
 
             } else if (strncmp(msg.operation, "SEARCH_PARALLEL|", 16) == 0) {
                 // Parse: palavra e N
@@ -367,6 +454,7 @@ int main() {
                             const IndexEntry *entry = cache_get_by_index(j);
                             if (!entry || entry->year == -1) continue;
             
+                            if (!entry->path || strlen(entry->path) == 0) continue;
                             int fd = open(entry->path, O_RDONLY);
                             if (fd == -1) continue;
             
@@ -377,12 +465,11 @@ int main() {
                             buf[len] = '\0';
             
                             if (strstr(buf, word)) {
-                                char line[256];
-                                snprintf(line, sizeof(line), "[%d] %s (%d) - %s [%s]\n",
-                                         entry->id, entry->title, entry->year,
-                                         entry->authors, entry->path);
-                                write(pipes[i][1], line, strlen(line));
+                                char id_buf[16];
+                                snprintf(id_buf, sizeof(id_buf), "%d,", entry->id);
+                                write(pipes[i][1], id_buf, strlen(id_buf));
                             }
+                            
                         }
             
                         close(pipes[i][1]);
@@ -406,16 +493,50 @@ int main() {
                     waitpid(pids[i], NULL, 0);  // espera filho
                 }
             
+                size_t len = strlen(final_result);
+                if (len > 0 && final_result[len - 1] == ',') {
+                    final_result[len - 1] = '\0';  // remove última vírgula
+                }
+
+                char formatted[2048];
                 if (strlen(final_result) == 0) {
-                    strcpy(final_result, "Sem resultados.");
+                    strcpy(formatted, "[]");
+                } else {
+                    snprintf(formatted, sizeof(formatted), "[%s]", final_result);
+                }
+
+                send_response_to_client(msg.client_pid, formatted);
+
+                char log_msg[128];
+                snprintf(log_msg, sizeof(log_msg), "Palavra='%s' com %d processo(s) filhos", word, N);
+                log_operation("SEARCH_PARALLEL", log_msg);
+
+                free(copy);
+
+                
+            } else if (strcmp(msg.operation, "STATS") == 0) {
+                char response[256];
+            
+                int cache_current_size = cache_size();
+                int disk_count = 0;
+                IndexEntry *entries = NULL;
+            
+                if (storage_load_all(&entries, &disk_count) != 0) {
+                    strcpy(response, "Erro ao carregar índices do disco.");
+                } else {
+                    snprintf(response, sizeof(response),
+                        "Tamanho atual da cache: %d\nNúmero total de índices no disco: %d",
+                        cache_current_size, disk_count);
+                    free(entries);
                 }
             
-                send_response_to_client(msg.client_pid, final_result);
-                free(copy);
-                
+                log_operation("STATS", "Consulta de estatísticas");
+                send_response_to_client(msg.client_pid, response);
+
             } else if (strcmp(msg.operation, "SHUTDOWN") == 0) {
 
                 printf("Servidor: encerramento solicitado pelo cliente %d\n", msg.client_pid);
+                log_operation("SHUTDOWN", "Servidor encerrado via comando do cliente");
                 cleanup();  // remove FIFO e liberta recursos
                 exit(0);
 
